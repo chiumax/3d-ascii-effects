@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Card3DHover, Card3DAscii, CardAsciiPattern } from '@/components';
+import { Card3DHover, Card3DAscii, CardAsciiPattern, shaderNames, ShaderType } from '@/components';
 
 // ============================================================================
 // TYPES
@@ -13,6 +13,9 @@ interface SandboxConfig {
   // Model
   selectedModel: number;
   accentColor: string;
+  // Shader Type
+  shaderType: ShaderType;
+  shaderIntensity: number;
   // Pattern
   tileSize: number;
   useBlockyPattern: boolean;
@@ -66,6 +69,8 @@ const models = [
 const defaultConfig: SandboxConfig = {
   selectedModel: 4, // Open Source
   accentColor: '#ec4899',
+  shaderType: 'ascii',
+  shaderIntensity: 0.8,
   tileSize: 6,
   useBlockyPattern: true,
   darkMode: false,
@@ -344,6 +349,8 @@ function SandboxTab() {
             showLabel={config.showLabel}
             height={config.height}
             modelScale={config.modelScale}
+            shaderType={config.shaderType}
+            shaderIntensity={config.shaderIntensity}
             title={selectedModel.name}
             description="Configurable ASCII 3D"
           />
@@ -388,8 +395,37 @@ function SandboxTab() {
               <Toggle label="Show Label" checked={config.showLabel} onChange={(v) => updateConfig('showLabel', v)} />
             </Section>
 
+            {/* Shader Effect */}
+            <Section title="Shader Effect">
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Effect Type</label>
+                <select
+                  value={config.shaderType}
+                  onChange={(e) => updateConfig('shaderType', e.target.value as ShaderType)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-white"
+                >
+                  {(Object.keys(shaderNames) as ShaderType[]).map((type) => (
+                    <option key={type} value={type}>{shaderNames[type]}</option>
+                  ))}
+                </select>
+              </div>
+              <Slider
+                label="Effect Intensity"
+                value={config.shaderIntensity}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={(v) => updateConfig('shaderIntensity', v)}
+              />
+              {config.shaderType !== 'ascii' && (
+                <p className="text-xs text-gray-500 italic">
+                  Pattern settings only apply to ASCII shader
+                </p>
+              )}
+            </Section>
+
             {/* Pattern Settings */}
-            <Section title="Pattern Settings">
+            <Section title="Pattern Settings" defaultOpen={config.shaderType === 'ascii'}>
               <Slider label="Tile Size" value={config.tileSize} min={2} max={20} step={1} onChange={(v) => updateConfig('tileSize', v)} />
               <Toggle label="Blocky Pattern" checked={config.useBlockyPattern} onChange={(v) => updateConfig('useBlockyPattern', v)} />
               <Toggle label="Dark Mode" checked={config.darkMode} onChange={(v) => updateConfig('darkMode', v)} />
@@ -443,6 +479,8 @@ function SandboxTab() {
                 const code = `<Card3DAscii
   modelPath="${selectedModel.path}"
   accentColor="${config.accentColor}"
+  shaderType="${config.shaderType}"
+  shaderIntensity={${config.shaderIntensity}}
   tileSize={${config.tileSize}}
   useBlockyPattern={${config.useBlockyPattern}}
   darkMode={${config.darkMode}}

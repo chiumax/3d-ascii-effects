@@ -12,6 +12,7 @@ import { useGLTF, Float } from '@react-three/drei';
 import { useRef, useEffect, useState, useMemo, Suspense, useCallback } from 'react';
 import * as THREE from 'three';
 import { MathUtils } from 'three';
+import { ShaderType, shaderMap, shaderVertex } from './shaders';
 
 // ============================================================================
 // DOUBLE FBO CLASS - Ping-pong rendering for fluid simulation
@@ -507,6 +508,8 @@ interface SceneProps {
   mouseUV: THREE.Vector2;
   isCardHovered: boolean;
   modelScale: number;
+  shaderType: ShaderType;
+  shaderIntensity: number;
 }
 
 function Scene3DAscii({
@@ -536,6 +539,8 @@ function Scene3DAscii({
   mouseUV,
   isCardHovered,
   modelScale,
+  shaderType,
+  shaderIntensity,
 }: SceneProps) {
   const { size, gl, camera } = useThree();
   const timeRef = useRef(0);
@@ -654,6 +659,45 @@ function Scene3DAscii({
     uniforms: { uMap: { value: null } },
   }), []);
 
+  // Custom shader material for non-ASCII shaders
+  const customShaderMaterial = useMemo(() => {
+    if (shaderType === 'ascii') return null;
+    const fragmentShader = shaderMap[shaderType];
+    if (!fragmentShader) return null;
+
+    return new THREE.ShaderMaterial({
+      vertexShader: shaderVertex,
+      fragmentShader,
+      uniforms: {
+        uImage: { value: null },
+        uResolution: { value: new THREE.Vector2(size.width, size.height) },
+        uTime: { value: 0 },
+        uSaturation: { value: saturation },
+        uBrightness: { value: brightness },
+        uContrast: { value: contrast },
+        uExposure: { value: exposure },
+        uDarkMode: { value: darkMode ? 1.0 : 0.0 },
+        uIntensity: { value: shaderIntensity },
+        uBaseTileSize: { value: tileSize },
+      },
+    });
+  }, [shaderType, size.width, size.height, saturation, brightness, contrast, exposure, darkMode, shaderIntensity, tileSize]);
+
+  const customShaderScene = useMemo(() => new THREE.Scene(), []);
+  const customShaderMesh = useMemo(() => {
+    if (!customShaderMaterial) return null;
+    return new THREE.Mesh(quadGeometry, customShaderMaterial);
+  }, [customShaderMaterial]);
+
+  useEffect(() => {
+    if (customShaderMesh) {
+      customShaderScene.add(customShaderMesh);
+      return () => {
+        customShaderScene.remove(customShaderMesh);
+      };
+    }
+  }, [customShaderScene, customShaderMesh]);
+
   const fluidScene = useMemo(() => new THREE.Scene(), []);
   const patternScene = useMemo(() => new THREE.Scene(), []);
   const displayScene = useMemo(() => new THREE.Scene(), []);
@@ -699,15 +743,18 @@ function Scene3DAscii({
   }, [isCardHovered]);
 
   useFrame(() => {
-    if (!patternAtlas || !altPatternAtlas) return;
+    // For ASCII shader, wait for pattern atlases
+    if (shaderType === 'ascii' && (!patternAtlas || !altPatternAtlas)) return;
+    // For custom shaders, check material exists
+    if (shaderType !== 'ascii' && !customShaderMaterial) return;
 
     timeRef.current += 0.05;
 
     const prevTarget = gl.getRenderTarget();
     const prevAutoClear = gl.autoClear;
 
-    // Initialize density FBO with paint (once)
-    if (!densityInitializedRef.current) {
+    // Initialize density FBO with paint (once) - only for ASCII
+    if (shaderType === 'ascii' && !densityInitializedRef.current) {
       densityInitializedRef.current = true;
       fillMaterial.uniforms.uColor.value.set(0.5, 0.5, 0.5);
       fluidMesh.material = fillMaterial;
@@ -719,8 +766,8 @@ function Scene3DAscii({
       densityFBO.swap();
     }
 
-    // Fluid simulation (only when painting is enabled and hovering)
-    if (enablePainting && isCardHovered && mouseUV.x >= 0 && mouseUV.y >= 0) {
+    // Fluid simulation (only when painting is enabled and hovering) - only for ASCII
+    if (shaderType === 'ascii' && enablePainting && isCardHovered && mouseUV.x >= 0 && mouseUV.y >= 0) {
       if (!isMouseInitRef.current) {
         isMouseInitRef.current = true;
         lastMouseRef.current.copy(mouseUV);
@@ -771,39 +818,61 @@ function Scene3DAscii({
     gl.setRenderTarget(sceneFBO);
     gl.render(modelScene, camera);
 
-    // ASCII post-process
     const pixelRatio = typeof window !== 'undefined' ? window.devicePixelRatio : 1;
     const renderWidth = Math.round(size.width * 2 * pixelRatio);
     const renderHeight = Math.round(size.height * 2 * pixelRatio);
 
-    asciiMaterial.uniforms.uImage.value = sceneFBO.texture;
-    asciiMaterial.uniforms.uImageDimensions.value.set(size.width * 2, size.height * 2);
-    asciiMaterial.uniforms.uDeformTexture.value = densityFBO.read.texture;
-    asciiMaterial.uniforms.uPatternAtlas.value = patternAtlas;
-    asciiMaterial.uniforms.uAltPatternAtlas.value = altPatternAtlas;
-    asciiMaterial.uniforms.uTime.value = timeRef.current * animationSpeed;
-    asciiMaterial.uniforms.uResolution.value.set(renderWidth, renderHeight);
-    asciiMaterial.uniforms.uLogicalResolution.value.set(size.width, size.height);
-    asciiMaterial.uniforms.uCoordinateScale.value = size.width / renderWidth;
-    asciiMaterial.uniforms.uBaseTileSize.value = tileSize;
-    asciiMaterial.uniforms.uSaturation.value = saturation;
-    asciiMaterial.uniforms.uBrightness.value = brightness;
-    asciiMaterial.uniforms.uContrast.value = contrast;
-    asciiMaterial.uniforms.uExposure.value = exposure;
-    asciiMaterial.uniforms.uDarkMode.value = darkMode ? 1.0 : 0.0;
-    asciiMaterial.uniforms.uPatternAtlasColumns.value = useBlockyPattern ? 6 : 4;
-    asciiMaterial.uniforms.uAltPatternAtlasColumns.value = 6;
-    asciiMaterial.uniforms.uFadeThreshold.value = fadeThreshold;
-    asciiMaterial.uniforms.uFadeWidth.value = fadeWidth;
-    asciiMaterial.uniforms.uAltPatternOpacity.value = patternOpacity;
-    asciiMaterial.uniforms.uEnableFadeTransition.value = enableFadeTransition ? 1.0 : 0.0;
+    if (shaderType === 'ascii') {
+      // ASCII post-process pipeline
+      asciiMaterial.uniforms.uImage.value = sceneFBO.texture;
+      asciiMaterial.uniforms.uImageDimensions.value.set(size.width * 2, size.height * 2);
+      asciiMaterial.uniforms.uDeformTexture.value = densityFBO.read.texture;
+      asciiMaterial.uniforms.uPatternAtlas.value = patternAtlas;
+      asciiMaterial.uniforms.uAltPatternAtlas.value = altPatternAtlas;
+      asciiMaterial.uniforms.uTime.value = timeRef.current * animationSpeed;
+      asciiMaterial.uniforms.uResolution.value.set(renderWidth, renderHeight);
+      asciiMaterial.uniforms.uLogicalResolution.value.set(size.width, size.height);
+      asciiMaterial.uniforms.uCoordinateScale.value = size.width / renderWidth;
+      asciiMaterial.uniforms.uBaseTileSize.value = tileSize;
+      asciiMaterial.uniforms.uSaturation.value = saturation;
+      asciiMaterial.uniforms.uBrightness.value = brightness;
+      asciiMaterial.uniforms.uContrast.value = contrast;
+      asciiMaterial.uniforms.uExposure.value = exposure;
+      asciiMaterial.uniforms.uDarkMode.value = darkMode ? 1.0 : 0.0;
+      asciiMaterial.uniforms.uPatternAtlasColumns.value = useBlockyPattern ? 6 : 4;
+      asciiMaterial.uniforms.uAltPatternAtlasColumns.value = 6;
+      asciiMaterial.uniforms.uFadeThreshold.value = fadeThreshold;
+      asciiMaterial.uniforms.uFadeWidth.value = fadeWidth;
+      asciiMaterial.uniforms.uAltPatternOpacity.value = patternOpacity;
+      asciiMaterial.uniforms.uEnableFadeTransition.value = enableFadeTransition ? 1.0 : 0.0;
 
-    patternFBO.setSize(renderWidth, renderHeight);
-    gl.setRenderTarget(patternFBO);
-    gl.render(patternScene, quadCamera);
+      patternFBO.setSize(renderWidth, renderHeight);
+      gl.setRenderTarget(patternFBO);
+      gl.render(patternScene, quadCamera);
 
-    // Display
-    displayMaterial.uniforms.uMap.value = patternFBO.texture;
+      // Display
+      displayMaterial.uniforms.uMap.value = patternFBO.texture;
+    } else {
+      // Custom shader pipeline
+      customShaderMaterial!.uniforms.uImage.value = sceneFBO.texture;
+      customShaderMaterial!.uniforms.uResolution.value.set(size.width, size.height);
+      customShaderMaterial!.uniforms.uTime.value = timeRef.current * animationSpeed;
+      customShaderMaterial!.uniforms.uSaturation.value = saturation;
+      customShaderMaterial!.uniforms.uBrightness.value = brightness;
+      customShaderMaterial!.uniforms.uContrast.value = contrast;
+      customShaderMaterial!.uniforms.uExposure.value = exposure;
+      customShaderMaterial!.uniforms.uDarkMode.value = darkMode ? 1.0 : 0.0;
+      customShaderMaterial!.uniforms.uIntensity.value = shaderIntensity;
+      customShaderMaterial!.uniforms.uBaseTileSize.value = tileSize;
+
+      patternFBO.setSize(renderWidth, renderHeight);
+      gl.setRenderTarget(patternFBO);
+      gl.render(customShaderScene, quadCamera);
+
+      // Display
+      displayMaterial.uniforms.uMap.value = patternFBO.texture;
+    }
+
     gl.setRenderTarget(null);
     gl.autoClear = false;
     gl.render(displayScene, quadCamera);
@@ -873,6 +942,9 @@ export interface Card3DAsciiProps {
   patternOpacity?: number;
   enableFadeTransition?: boolean;
   invertLuminance?: boolean;
+  // Shader Type
+  shaderType?: ShaderType;
+  shaderIntensity?: number;
   // Display
   showLabel?: boolean;
   className?: string;
@@ -911,6 +983,9 @@ export function Card3DAscii({
   patternOpacity = 1.0,
   enableFadeTransition = false,
   invertLuminance = true,
+  // Shader Type
+  shaderType = 'ascii',
+  shaderIntensity = 0.8,
   // Display
   showLabel = true,
   className = '',
@@ -1003,6 +1078,8 @@ export function Card3DAscii({
             mouseUV={mouseUVRef.current}
             isCardHovered={isHovered}
             modelScale={modelScale}
+            shaderType={shaderType}
+            shaderIntensity={shaderIntensity}
           />
         </Canvas>
       </div>

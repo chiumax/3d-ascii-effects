@@ -6,3 +6,6 @@ export type { Card3DAsciiProps } from './Card3DAscii';
 
 export { CardAsciiPattern } from './CardAsciiPattern';
 export type { CardAsciiPatternProps } from './CardAsciiPattern';
+
+export { shaderNames } from './shaders';
+export type { ShaderType } from './shaders';
